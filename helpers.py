@@ -154,10 +154,9 @@ def df_to_matrix(df, row_name, col_name):
     return interactions, rid_to_idx, idx_to_rid, cid_to_idx, idx_to_cid
 
 
-def train_test_split(interactions, split_count, fraction=None):
+def train_test_split(interactions, split_count=7, fraction=0.2):
     """
     Split recommendation data into train and test sets
-
     Params
     ------
     interactions : scipy.sparse matrix
@@ -170,36 +169,42 @@ def train_test_split(interactions, split_count, fraction=None):
         interactions into test set. If None, then all
         users are considered.
     """
-    # Note: likely not the fastest way to do things below.
     train = interactions.copy().tocoo()
     test = sp.lil_matrix(train.shape)
 
-    if fraction:
-        try:
-            user_index = np.random.choice(
-                np.where(np.bincount(train.row) >= split_count * 2)[0],
-                replace=False,
-                size=np.int64(np.floor(fraction * train.shape[0]))
-            ).tolist()
-        except:
-            print(('Not enough users with > {} '
-                  'interactions for fraction of {}')\
-                  .format(2*split_count, fraction))
-            raise
-    else:
-        user_index = range(train.shape[0])
+    select_users = np.where(np.bincount(train.row) >= split_count * 2)[0]
+    test_users = np.random.permutation(select_users)[:int((np.floor(fraction*(np.unique(train.row)).shape[0])))]
+
+
+    if (fraction < 1 and test_users.shape[0] == 0):
+        print('Not enough users for {} fraction, setting fraction to 1'.format(fraction))
+        test_users = np.where(np.bincount(train.row) >= split_count * 2)[0]
+        fraction = 1
+
+    if (test_users.shape[0] == 0 and fraction == 1):
+        while(test_users.shape[0] == 0 and split_count >= 2):
+            print(('No user with {} interactions, setting split_count to {} and fraction to 1')\
+                  .format(2*split_count, split_count - 1))
+            split_count -= 1
+            test_users = np.where(np.bincount(train.row) >= split_count * 2)[0]
+
+    if test_users.shape[0] ==0:
+        print('No user has more than one interaction, cannot split data')
+        return None
 
     train = train.tolil()
 
-    for user in user_index:
-        test_interactions = np.random.choice(interactions.getrow(user).indices,
-                                        size=split_count,
-                                        replace=False)
+    for user in test_users:
+        test_interactions = np.random.permutation(interactions.getrow(user).indices)[:((split_count))]
         train[user, test_interactions] = 0.
-        # These are just 1.0 right now
         test[user, test_interactions] = interactions[user, test_interactions]
 
 
     # Test and training are truly disjoint
     assert(train.multiply(test).nnz == 0)
-    return train.tocsr(), test.tocsr(), user_index
+    #All interactions are accounted for 
+    assert(interactions.nnz==test.tocsr().nnz+train.tocsr().nnz)
+    #Train>=Test
+    assert(train.tocsr().nnz>=test.tocsr().nnz)
+
+    return train.tocsr(), test.tocsr()
